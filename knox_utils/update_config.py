@@ -7,6 +7,7 @@ def update_config_if_needed():
     """
     If Ambari properties file is newer than config.ini, update protocol/port in config.ini.
     """
+    print("[INFO] Updating config.ini")
     if not os.path.exists(AMBARI_PROPERTIES_PATH) or not os.path.exists(CONFIG_PATH):
         return
     props_mtime = os.path.getmtime(AMBARI_PROPERTIES_PATH)
