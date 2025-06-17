@@ -88,13 +88,29 @@ def set_knox_proxy_users():
     except Exception as e:
         print(f"[ERROR] Unexpected error in set_knox_proxy_users: {e}")
 
+def flush_topology_to_local(topology_vars):
+    """
+    Renders the advanced topology Jinja template using topology_vars and writes the output to a local file.
+    """
+    from jinja2 import Environment, FileSystemLoader
+    import os
+    template_dir = os.path.join(os.path.dirname(__file__), '../templates')
+    env = Environment(loader=FileSystemLoader(template_dir))
+    template = env.get_template('advaned_topology_template.j2')
+    rendered = template.render(**topology_vars)
+    output_path = os.path.join(os.path.dirname(__file__), '../rendered_topology.xml')
+    with open(output_path, 'w') as f:
+        f.write(rendered)
+    print(f"[SUCCESS] Rendered topology written to {output_path}")
+
 def configure_knox():
     """
     Calls set_knox_proxy_users and will call other Knox configuration functions as needed.
     """
     print("[INFO] Running Knox configuration steps...")
     set_knox_proxy_users()
-    apply_topology()
+    topology_vars = apply_topology()
+    flush_topology_to_local(topology_vars)
     # Future: call other Knox-related configuration functions here
 
 def apply_topology():
@@ -144,28 +160,10 @@ def apply_topology():
     is_namenode_ha = False
     is_ranger_installed = False
     is_solr_installed = False
-    # # Collect into a dict for now
-    # topology_vars = {
-    #     'ambari_ui_url': AMBARI_BASE_URL,
-    #     'ambariws_protocol': ambariws_protocol,
-    #     'ambariws_host': ambariws_host,
-    #     'ambariws_port': ambariws_port,
-    #     'ranger_protocol': ranger_protocol,
-    #     'ranger_host': ranger_host,
-    #     'ranger_port': ranger_port,
-    #     'rangerui_protocol': rangerui_protocol,
-    #     'rangerui_host': rangerui_host,
-    #     'rangerui_port': rangerui_port,
-    #     'solr_protocol': solr_protocol,
-    #     'solr_host': solr_host,
-    #     'solr_port': solr_port,
-    #     'hdfsui_protocol': hdfsui_protocol,
-    #     'hdfsui_host': hdfsui_host,
-    #     'hdfsui_port': hdfsui_port,
-    #     'is_namenode_ha': is_namenode_ha,
-    #     'is_ranger_installed': is_ranger_installed,
-    #     'is_solr_installed': is_solr_installed
-    # }
+    yarnui_protocol = None
+    yarnui_host = None
+    yarnui_port = None
+
     from . import configs
     protocol = AMBARI_BASE_URL.split(':')[0]  # Extract protocol from AMBARI_BASE_URL
     accessor = configs.api_accessor(
@@ -240,14 +238,31 @@ def apply_topology():
     except Exception as e:
         print(f"[INFO] Solr not installed or could not fetch infra-solr-env: {e}")
         is_solr_installed = False
-        
+
+    try:
+        yarn_site, _ = configs.get_current_config(CLUSTER_NAME, 'yarn-site', accessor)
+        yarn_log_url = yarn_site.get('yarn.log.server.web-service.url', None)
+        yarnui_protocol = None
+        yarnui_host = None
+        yarnui_port = None
+        if yarn_log_url:
+            # Remove everything from /ws onward
+            import re
+            match = re.match(r'^(https?)://([^:/]+)(?::(\d+))?', yarn_log_url)
+            if match:
+                yarnui_protocol = match.group(1)
+                yarnui_host = match.group(2)
+                yarnui_port = match.group(3)
+    except Exception as e:
+        print(f"[WARN] Could not fetch yarn-site or parse yarn.log.server.web-service.url: {e}")
+
     topology_vars = {
         'ambari_ui_url': AMBARI_BASE_URL,
         'ambariws_protocol': ambariws_protocol,
         'ambariws_host': ambariws_host,
         'ambariws_port': ambariws_port,
-        'ranger_host': ranger_base_url,
-        'rangerui_host': rangerui_base_url,
+        'ranger_base_url': ranger_base_url,
+        'rangerui_base_url': rangerui_base_url,
         'solr_protocol': solr_protocol,
         'solr_host': solr_host,
         'solr_port': solr_port,
@@ -255,6 +270,9 @@ def apply_topology():
         'hdfsui_host': namenode_host,
         'hdfsui_port': hdfsui_port,
         'namenode_host': namenode_host,
+        'yarnui_protocol': yarnui_protocol,
+        'yarnui_host': yarnui_host,
+        'yarnui_port': yarnui_port,
         'is_namenode_ha': is_namenode_ha,
         'is_ranger_installed': is_ranger_installed,
         'is_solr_installed': is_solr_installed

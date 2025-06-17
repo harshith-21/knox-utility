@@ -1,2 +1,3 @@
 paramiko
 requests
+jinja2

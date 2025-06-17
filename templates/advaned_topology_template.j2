@@ -144,11 +144,11 @@
             </service>
             <service>
                 <role>YARNUI</role>
-                {% raw %}<url>{{yarnui_protocol}}://{{yarnui_host}}:{{yarnui_port}}/</url>{% endraw %}
+                <url>{{yarnui_protocol}}://{{yarnui_host}}:{{yarnui_port}}/</url>
             </service>
             <service>
                 <role>AMBARIUI</role>
-                <url>{{AMBARI_BASE_URL}}</url>
+                <url>{{ambari_ui_url}}</url>
             </service>
             <service>
                 <role>AMBARIWS</role>
@@ -157,11 +157,11 @@
             {% if is_ranger_installed %}
             <service>
                 <role>RANGER</role>
-                <url>{{ranger_protocol}}://{{ranger_host}}:{{ranger_port}}/</url>
+                <url>{{ranger_base_url}}/</url>
             </service>
             <service>
                 <role>RANGERUI</role>
-                <url>{{rangerui_protocol}}://{{rangerui_host}}:{{rangerui_port}}/</url>
+                <url>{{rangerui_base_url}}/</url>
             </service>
             {% endif %}
 
