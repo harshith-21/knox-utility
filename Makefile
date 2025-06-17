@@ -16,8 +16,11 @@ install: venv
 install-remote: venv
 	$(VENV_NAME)/bin/python main.py --local false --check-knox 
 
-configure-knox: venv
+configure-knox: venv clean-doSet
 	$(VENV_NAME)/bin/python main.py --configure-knox
 
 clean:
 	rm -rf $(VENV_NAME)
+
+clean-doSet:
+	rm -rf doSet*
