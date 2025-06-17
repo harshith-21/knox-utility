@@ -109,11 +109,12 @@ def configure_knox():
     """
     print("[INFO] Running Knox configuration steps...")
     set_knox_proxy_users()
-    topology_vars = apply_topology()
+    topology_vars = get_topology_vars()
     flush_topology_to_local(topology_vars)
+    apply_topology_to_knox()
     # Future: call other Knox-related configuration functions here
 
-def apply_topology():
+def get_topology_vars():
     """
     Prepares to apply the advanced topology template by collecting all required variables.
     
@@ -281,4 +282,44 @@ def apply_topology():
     for k, v in topology_vars.items():
         print(f"  {k}: {v}")
     return topology_vars
+
+def apply_topology_to_knox():
+    """
+    Reads the rendered topology XML from disk and applies it to Knox's advanced topology via Ambari API using configs.py.
+    """
+    from .params import AMBARI_HOST, USERNAME, PASSWORD, AMBARI_BASE_URL, CLUSTER_NAME, PORT
+    from . import configs
+    import os
+    rendered_path = os.path.join(os.path.dirname(__file__), '../rendered_topology.xml')
+    if not os.path.exists(rendered_path):
+        print(f"[ERROR] Rendered topology file not found at {rendered_path}")
+        return
+    with open(rendered_path, 'r') as f:
+        topology_xml = f.read()
+    # Use configs.py to update Knox's advanced topology
+    try:
+        accessor = configs.api_accessor(
+            host=AMBARI_HOST,
+            login=USERNAME,
+            password=PASSWORD,
+            protocol=AMBARI_BASE_URL.split(':')[0],
+            port=PORT,
+            unsafe=True
+        )
+        def update_knox_topology(cluster, config_type, accessor):
+            properties, attributes = configs.get_current_config(cluster, config_type, accessor)
+            # Set the 'content' property for the topology config type (Ambari/Knox expects this)
+            properties['content'] = topology_xml
+            return properties, attributes
+        configs.update_config(
+            cluster=CLUSTER_NAME,
+            config_type='topology',  # This should match the config type used in Ambari for Knox topology
+            config_updater=update_knox_topology,
+            accessor=accessor,
+            version_note='Update Knox advanced topology via automation'
+        )
+        print("[SUCCESS] Applied advanced topology to Knox via Ambari API.")
+        print("[INFO] If you want to verify, check the 'topology' config type in Ambari for the Knox service.")
+    except Exception as e:
+        print(f"[ERROR] Failed to apply topology to Knox: {e}")
 
