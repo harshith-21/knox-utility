@@ -88,6 +88,165 @@ def set_knox_proxy_users():
     except Exception as e:
         print(f"[ERROR] Unexpected error in set_knox_proxy_users: {e}")
 
+def set_knox_whitelist():
+    """
+    Configures Knox gateway.dispatch.whitelist property in Advanced gateway-site configuration
+    based on hostname patterns discovered from cluster hosts via Ambari API.
+    
+    Fetches all cluster hostnames, analyzes them for common domain patterns,
+    and generates appropriate whitelist regex if a consistent pattern is found.
+    """
+    from .params import AMBARI_HOST, USERNAME, PASSWORD, PROTOCOL, PORT, CLUSTER_NAME, AMBARI_BASE_URL
+    from . import configs
+    import requests
+    import urllib3
+    
+    print("[INFO] Configuring Knox whitelist based on cluster hostname patterns...")
+    
+    # Create accessor for API calls
+    try:
+        accessor = configs.api_accessor(
+            host=AMBARI_HOST,
+            login=USERNAME,
+            password=PASSWORD,
+            protocol=PROTOCOL,
+            port=PORT,
+            unsafe=True
+        )
+    except Exception as e:
+        print(f"[ERROR] Failed to create API accessor: {e}")
+        raise
+    
+    # Fetch all cluster hostnames via Ambari API
+    try:
+        print("[INFO] Fetching cluster hostnames from Ambari API...")
+        hosts_url = f"{AMBARI_BASE_URL}/api/v1/clusters/{CLUSTER_NAME}/hosts"
+        
+        if AMBARI_BASE_URL.startswith('https'):
+            try:
+                response = requests.get(hosts_url, auth=(USERNAME, PASSWORD), timeout=10)
+            except requests.exceptions.SSLError:
+                print("[WARN] SSL verification failed. Retrying with SSL verification disabled.")
+                urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+                response = requests.get(hosts_url, auth=(USERNAME, PASSWORD), timeout=10, verify=False)
+        else:
+            response = requests.get(hosts_url, auth=(USERNAME, PASSWORD), timeout=10)
+        
+        if response.status_code != 200:
+            error_msg = f"[ERROR] Failed to fetch cluster hosts. Status: {response.status_code}"
+            print(error_msg)
+            raise ValueError(error_msg)
+        
+        hosts_data = response.json()
+        hostnames = []
+        
+        for item in hosts_data.get('items', []):
+            hostname = item.get('Hosts', {}).get('host_name')
+            if hostname:
+                hostnames.append(hostname)
+        
+        if not hostnames:
+            error_msg = "[ERROR] No hostnames found in cluster"
+            print(error_msg)
+            raise ValueError(error_msg)
+        
+        print(f"[INFO] Found {len(hostnames)} cluster hostnames: {hostnames}")
+        
+    except Exception as e:
+        print(f"[ERROR] Failed to fetch cluster hostnames: {e}")
+        raise
+    
+    # Analyze hostnames for common domain pattern
+    print("[INFO] Analyzing hostnames for common domain patterns...")
+    
+    # Extract domain suffixes (last 2 parts when split by '.')
+    domain_suffixes = []
+    valid_hostnames = []
+    
+    for hostname in hostnames:
+        parts = hostname.split('.')
+        if len(parts) >= 3:  # Must have at least 3 parts for FQDN
+            domain_suffix = '.'.join(parts[-2:])  # Get last 2 parts
+            domain_suffixes.append(domain_suffix)
+            valid_hostnames.append(hostname)
+            print(f"[DEBUG] {hostname} → domain suffix: {domain_suffix}")
+        else:
+            print(f"[WARN] Skipping hostname with insufficient parts: {hostname} ({len(parts)} parts)")
+    
+    if not domain_suffixes:
+        error_msg = "[ERROR] No valid FQDNs found in cluster hostnames. All hostnames must have at least 3 parts (hostname.domain.tld)"
+        print(error_msg)
+        raise ValueError(error_msg)
+    
+    # Check if all domain suffixes are the same
+    unique_suffixes = set(domain_suffixes)
+    
+    if len(unique_suffixes) == 1:
+        # All hostnames share the same domain suffix
+        common_domain = list(unique_suffixes)[0]
+        print(f"[SUCCESS] Found common domain pattern: {common_domain}")
+        
+        # Generate whitelist regex pattern
+        escaped_domain = common_domain.replace(".", "\\.")
+        whitelist_regex = f'^https?:\\/\\/(.+\\.{escaped_domain}):[0-9]+\\/?.*$'
+        
+        print(f"[INFO] Generated whitelist regex: {whitelist_regex}")
+        
+    elif len(unique_suffixes) > 1:
+        # Multiple different domain suffixes found
+        error_msg = f"[ERROR] Multiple domain suffixes found in cluster hostnames: {unique_suffixes}. Cannot generate consistent whitelist pattern."
+        print(error_msg)
+        print(f"[INFO] Hostnames analyzed: {valid_hostnames}")
+        raise ValueError(error_msg)
+    
+    else:
+        # This shouldn't happen, but just in case
+        error_msg = "[ERROR] Unexpected error in domain suffix analysis"
+        print(error_msg)
+        raise ValueError(error_msg)
+    
+    try:
+        accessor = configs.api_accessor(
+            host=AMBARI_HOST,
+            login=USERNAME,
+            password=PASSWORD,
+            protocol=PROTOCOL,
+            port=PORT,
+            unsafe=True
+        )
+        
+        version_note = "Set Knox gateway.dispatch.whitelist for hostname pattern"
+        
+        def update_knox_whitelist(cluster, config_type, accessor):
+            try:
+                properties, attributes = configs.get_current_config(cluster, config_type, accessor)
+            except Exception as e:
+                print(f"[ERROR] Failed to fetch current gateway-site config: {e}")
+                raise
+            
+            # Set the whitelist property
+            properties['gateway.dispatch.whitelist'] = whitelist_regex
+            print(f"[INFO] Setting gateway.dispatch.whitelist = {whitelist_regex}")
+            
+            return properties, attributes
+        
+        try:
+            configs.update_config(
+                cluster=CLUSTER_NAME,
+                config_type='gateway-site',
+                config_updater=update_knox_whitelist,
+                accessor=accessor,
+                version_note=version_note
+            )
+            print("[SUCCESS] Knox whitelist property updated in gateway-site configuration.")
+        except Exception as e:
+            print(f"[ERROR] Failed to update gateway-site config: {e}")
+            raise
+            
+    except Exception as e:
+        print(f"[ERROR] Unexpected error in set_knox_whitelist: {e}")
+        raise
+
 def flush_topology_to_local(topology_vars):
     """
     Renders the advanced topology Jinja template using topology_vars and writes the output to a local file.
@@ -105,10 +264,11 @@ def flush_topology_to_local(topology_vars):
 
 def configure_knox():
     """
-    Calls set_knox_proxy_users and will call other Knox configuration functions as needed.
+    Calls set_knox_proxy_users, set_knox_whitelist and will call other Knox configuration functions as needed.
     """
     print("[INFO] Running Knox configuration steps...")
     set_knox_proxy_users()
+    set_knox_whitelist()
     topology_vars = get_topology_vars()
     flush_topology_to_local(topology_vars)
     apply_topology_to_knox()
